@@ -1,0 +1,431 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravity Forms HTML to JSON Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 300px;
+            padding: 10px;
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #output {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        a#downloadLink {
+            display: none;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            text-align: center;
+        }
+        a#downloadLink:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <h1>Gravity Forms HTML to JSON Converter</h1>
+    <div class="container">
+        <label for="htmlInput">Paste Gravity Forms HTML:</label>
+        <textarea id="htmlInput" placeholder="Paste the Gravity Forms HTML here..."></textarea>
+        <button onclick="generateJSON()">Generate JSON</button>
+        <label for="output">Generated JSON:</label>
+        <pre id="output"></pre>
+        <a id="downloadLink" href="#" download="gravityforms-export.json">Download JSON File</a>
+    </div>
+
+    <script>
+        function generateJSON() {
+            const htmlInput = document.getElementById('htmlInput').value;
+            const outputElement = document.getElementById('output');
+            const downloadLink = document.getElementById('downloadLink');
+
+            try {
+                // Parse HTML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlInput, 'text/html');
+                const form = doc.querySelector('form[id^="gform_"]');
+                if (!form) throw new Error('No Gravity Form found in the HTML.');
+
+                // Extract form ID
+                const formId = form.getAttribute('data-formid');
+                const formTitle = form.getAttribute('action').replace(/\//g, '').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) + ' Form';
+
+                // Extract fields
+                const fields = [];
+                const fieldElements = form.querySelectorAll('.gfield');
+                let nextFieldId = 1;
+
+                fieldElements.forEach(field => {
+                    const fieldId = field.id.replace('field_' + formId + '_', '');
+                    const labelElement = field.querySelector('.gfield_label');
+                    const label = labelElement ? labelElement.textContent.replace(/\*+$/, '').trim() : '';
+                    const isRequired = field.classList.contains('gfield_contains_required');
+                    const visibility = field.classList.contains('gfield_visibility_hidden') ? 'hidden' : 'visible';
+
+                    // Skip unwanted fields
+                    if (visibility === 'hidden' || label === 'Consent' || field.classList.contains('gfield--type-captcha')) {
+                        return;
+                    }
+
+                    // Determine field type
+                    let type = field.classList.contains('gfield--type-section') ? 'section' :
+                               field.classList.contains('gfield--type-name') ? 'name' :
+                               field.classList.contains('gfield--type-address') ? 'address' :
+                               field.classList.contains('gfield--type-email') ? 'email' :
+                               field.classList.contains('gfield--type-phone') ? 'phone' :
+                               field.classList.contains('gfield--type-select') ? 'select' :
+                               field.classList.contains('gfield--type-textarea') ? 'textarea' :
+                               field.classList.contains('gfield--type-text') ? 'text' :
+                               field.classList.contains('gfield--type-radio') ? 'radio' :
+                               field.classList.contains('gfield--type-checkbox') ? 'checkbox' : null;
+
+                    if (!type) return;
+
+                    // Common field properties
+                    const fieldObj = {
+                        type: type,
+                        id: parseInt(fieldId),
+                        formId: parseInt(formId),
+                        label: label,
+                        adminLabel: "",
+                        isRequired: isRequired,
+                        size: type === 'textarea' ? 'medium' : 'large',
+                        errorMessage: isRequired ? `Please ${type === 'select' ? 'select' : 'enter'} a valid ${label.toLowerCase()}` : "",
+                        visibility: "visible",
+                        description: "",
+                        allowsPrepopulate: false,
+                        inputMask: false,
+                        inputMaskValue: "",
+                        inputMaskIsCustom: false,
+                        maxLength: "",
+                        labelPlacement: "",
+                        descriptionPlacement: "",
+                        subLabelPlacement: "",
+                        placeholder: "",
+                        cssClass: field.classList.contains('gfield--width-half') ? "gfield--width-half" : "",
+                        inputName: "",
+                        noDuplicates: false,
+                        defaultValue: "",
+                        enableAutocomplete: false,
+                        autocompleteAttribute: "",
+                        choices: "",
+                        conditionalLogic: "",
+                        productField: "",
+                        layoutGridColumnSpan: field.classList.contains('gfield--width-half') ? 6 : 12,
+                        enableEnhancedUI: 0,
+                        layoutGroupId: label.toLowerCase().replace(/\s+/g, '-'),
+                        multipleFiles: false,
+                        maxFiles: "",
+                        calculationFormula: "",
+                        calculationRounding: "",
+                        enableCalculation: "",
+                        disableQuantity: false,
+                        displayAllCategories: false,
+                        useRichTextEditor: false,
+                        errors: [],
+                        fields: ""
+                    };
+
+                    // Type-specific properties
+                    if (type === 'section') {
+                        fieldObj.cssClass = "gsection";
+                    } else if (type === 'name') {
+                        fieldObj.inputs = [
+                            { id: fieldId + ".3", label: "First", name: "", autocompleteAttribute: "given-name" },
+                            { id: fieldId + ".6", label: "Last", name: "", autocompleteAttribute: "family-name" }
+                        ];
+                        fieldObj.subLabelPlacement = "below";
+                    } else if (type === 'address') {
+                        fieldObj.addressType = field.querySelector('select[name$=".4"]') ? "us" : "international";
+                        fieldObj.inputs = [
+                            { id: fieldId + ".1", label: "Street Address", name: "", autocompleteAttribute: "address-line1" },
+                            { id: fieldId + ".2", label: "Address Line 2", name: "", autocompleteAttribute: "address-line2" },
+                            { id: fieldId + ".3", label: "City", name: "", autocompleteAttribute: "address-level2" },
+                            { id: fieldId + ".4", label: field.querySelector('select[name$=".4"]') ? "State" : "State / Province", name: "", autocompleteAttribute: "address-level1" },
+                            { id: fieldId + ".5", label: field.querySelector('select[name$=".4"]') ? "ZIP Code" : "ZIP / Postal Code", name: "", autocompleteAttribute: "postal-code" },
+                            { id: fieldId + ".6", label: "Country", name: "", autocompleteAttribute: "country-name", isHidden: true }
+                        ];
+                        fieldObj.subLabelPlacement = "below";
+                        if (fieldObj.addressType === "us") {
+                            fieldObj.defaultCountry = "United States";
+                            fieldObj.defaultValue = `{\"${fieldId}.6\":\"United States\"}`;
+                        }
+                    } else if (type === 'email') {
+                        fieldObj.inputs = null;
+                        fieldObj.autocompleteAttribute = "email";
+                        fieldObj.emailConfirmEnabled = "";
+                    } else if (type === 'phone') {
+                        fieldObj.inputs = null;
+                        fieldObj.phoneFormat = "standard";
+                        fieldObj.autocompleteAttribute = "tel";
+                    } else if (type === 'select') {
+                        fieldObj.inputs = null;
+                        const options = field.querySelectorAll('option');
+                        fieldObj.choices = Array.from(options).map(opt => ({
+                            text: opt.textContent,
+                            value: opt.value,
+                            isSelected: opt.selected,
+                            price: ""
+                        }));
+                    } else if (type === 'textarea') {
+                        fieldObj.inputs = null;
+                        const description = field.querySelector('.gfield_description')?.textContent || "";
+                        fieldObj.description = description;
+                    } else if (type === 'text') {
+                        fieldObj.inputs = null;
+                        const conditionalLogic = field.getAttribute('data-conditional-logic');
+                        if (conditionalLogic) {
+                            fieldObj.conditionalLogic = {
+                                actionType: "show",
+                                logicType: "all",
+                                rules: [{
+                                    fieldId: "9",
+                                    operator: "is",
+                                    value: "5"
+                                }]
+                            };
+                        }
+                        fieldObj.enablePasswordInput = "";
+                    } else if (type === 'radio') {
+                        fieldObj.inputs = null;
+                        fieldObj.validateState = true;
+                        const choices = field.querySelectorAll('.gchoice');
+                        fieldObj.choices = Array.from(choices).map(choice => ({
+                            text: choice.querySelector('label').textContent,
+                            value: choice.querySelector('input').value,
+                            isSelected: false,
+                            price: ""
+                        }));
+                    } else if (type === 'checkbox') {
+                        fieldObj.validateState = true;
+                        const choices = field.querySelectorAll('.gchoice');
+                        fieldObj.choices = Array.from(choices).map(choice => ({
+                            text: choice.querySelector('label').textContent,
+                            value: choice.querySelector('input').value,
+                            isSelected: false,
+                            price: ""
+                        }));
+                        fieldObj.inputs = fieldObj.choices.map((choice, index) => ({
+                            id: fieldId + "." + (index + 1),
+                            label: choice.text,
+                            name: ""
+                        }));
+                        fieldObj.enableSelectAll = "";
+                        fieldObj.selectAllText = "Select All";
+                    }
+
+                    fields.push(fieldObj);
+                    nextFieldId = Math.max(nextFieldId, parseInt(fieldId) + 1);
+                });
+
+                // Sort fields by ID
+                fields.sort((a, b) => a.id - b.id);
+
+                // Generate JSON
+                const jsonOutput = {
+                    "0": {
+                        title: formTitle,
+                        description: "",
+                        labelPlacement: "top_label",
+                        descriptionPlacement: form.querySelectorAll('.field_description_above').length > 0 ? "above" : "below",
+                        button: {
+                            type: "text",
+                            text: form.querySelector('.gform_button')?.value || "Submit",
+                            imageUrl: "",
+                            width: "full",
+                            location: "bottom",
+                            layoutGridColumnSpan: 12,
+                            id: "submit",
+                            conditionalLogic: ""
+                        },
+                        fields: fields,
+                        version: "2.9.8",
+                        id: parseInt(formId),
+                        markupVersion: 2,
+                        nextFieldId: nextFieldId,
+                        useCurrentUserAsAuthor: true,
+                        postContentTemplateEnabled: false,
+                        postTitleTemplateEnabled: false,
+                        postTitleTemplate: "",
+                        postContentTemplate: "",
+                        lastPageButton: null,
+                        pagination: null,
+                        firstPageCssClass: null,
+                        subLabelPlacement: "below",
+                        requiredIndicator: "asterisk",
+                        customRequiredIndicator: "(Required)",
+                        cssClass: formTitle.toLowerCase().replace(/\s+/g, '-'),
+                        saveButtonText: "Save and Continue Later",
+                        limitEntries: false,
+                        limitEntriesCount: "",
+                        limitEntriesPeriod: "",
+                        limitEntriesMessage: "",
+                        scheduleForm: false,
+                        scheduleStart: "",
+                        scheduleEnd: "",
+                        schedulePendingMessage: "",
+                        scheduleMessage: "",
+                        requireLogin: false,
+                        requireLoginMessage: "",
+                        enableHoneypot: true,
+                        validationSummary: false,
+                        deprecated: "",
+                        saveEnabled: "",
+                        enableAnimation: false,
+                        save: {
+                            enabled: false,
+                            button: {
+                                type: "link",
+                                text: "Save and Continue Later"
+                            }
+                        },
+                        scheduleStartHour: "",
+                        scheduleStartMinute: "",
+                        scheduleStartAmpm: "",
+                        scheduleEndHour: "",
+                        scheduleEndMinute: "",
+                        scheduleEndAmpm: "",
+                        notifications: [{
+                            id: "default_notification",
+                            isActive: true,
+                            to: "hlocker@genesrefrigeration.com",
+                            name: "Email Notification",
+                            event: "form_submission",
+                            toType: "email",
+                            subject: "{form_title} Submission",
+                            message: "{all_fields}",
+                            service: "wordpress",
+                            toEmail: "hlocker@genesrefrigeration.com",
+                            toField: "",
+                            routing: null,
+                            fromName: "{Name:1}",
+                            from: "no-reply@genesrefrigeration.rynosites.com",
+                            replyTo: "{Email:2}",
+                            bcc: "contactform@rynoss.com",
+                            disableAutoformat: false,
+                            notification_conditional_logic_object: "",
+                            notification_conditional_logic: "0",
+                            conditionalLogic: null,
+                            cc: "",
+                            enableAttachments: false
+                        }],
+                        confirmations: [{
+                            id: "default_confirmation",
+                            name: "Default Confirmation",
+                            isDefault: true,
+                            type: "page",
+                            message: "Thanks for submitting your request! We will get in touch with you shortly.",
+                            url: "",
+                            pageId: "214",
+                            queryString: "",
+                            event: "",
+                            disableAutoformat: false,
+                            page: "214",
+                            conditionalLogic: []
+                        }],
+                        validationPlacement: "below",
+                        honeypotAction: "spam"
+                    },
+                    version: "2.9.8"
+                };
+
+                // Display JSON
+                const jsonString = JSON.stringify(jsonOutput, null, 2);
+                outputElement.textContent = jsonString;
+
+                // Create download link
+                const blob = new Blob([jsonString], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                downloadLink.href = url;
+                downloadLink.style.display = 'block';
+                downloadLink.download = `gravityforms-export-${formTitle.toLowerCase().replace(/\s+/g, '-')}.json`;
+            } catch (error) {
+                outputElement.textContent = `Error: ${error.message}`;
+                downloadLink.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
