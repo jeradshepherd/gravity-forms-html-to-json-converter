@@ -102,13 +102,33 @@
         a#downloadLink:hover {
             background-color: #218838;
         }
+        .instructions {
+            background-color: #e7f3ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .instructions p {
+            margin: 0;
+        }
+        .instructions p + p {
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
     <h1>Gravity Forms HTML to JSON Converter</h1>
     <div class="container">
+        <div class="instructions">
+            <p><strong>Important:</strong> When copying your Gravity Form HTML, make sure to select the entire <code>&lt;div&gt;</code> element with the class <code>gform_wrapper</code>, including all content inside it. This ensures the tool captures all necessary form data.</p>
+        </div>
         <label for="htmlInput">Paste Gravity Forms HTML:</label>
         <textarea id="htmlInput" placeholder="Paste the Gravity Forms HTML here..."></textarea>
+        <div class="instructions">
+            <p><strong>Note:</strong> After generating and importing the JSON into Gravity Forms, you must review and adjust all form settings (e.g., notifications, confirmations, and other configurations) to match your specific needs.</p>
+        </div>
         <button onclick="generateJSON()">Generate JSON</button>
         <label for="output">Generated JSON:</label>
         <pre id="output"></pre>
@@ -136,6 +156,7 @@
                 const fields = [];
                 const fieldElements = form.querySelectorAll('.gfield');
                 let nextFieldId = 1;
+                let firstEmailFieldId = null;
 
                 fieldElements.forEach(field => {
                     const fieldId = field.id.replace('field_' + formId + '_', '');
@@ -162,6 +183,11 @@
                                field.classList.contains('gfield--type-checkbox') ? 'checkbox' : null;
 
                     if (!type) return;
+
+                    // Track the first email field for replyTo
+                    if (type === 'email' && !firstEmailFieldId) {
+                        firstEmailFieldId = fieldId;
+                    }
 
                     // Common field properties
                     const fieldObj = {
@@ -370,20 +396,19 @@
                         notifications: [{
                             id: "default_notification",
                             isActive: true,
-                            to: "hlocker@genesrefrigeration.com",
+                            to: "{admin_email}",
                             name: "Email Notification",
                             event: "form_submission",
                             toType: "email",
                             subject: "{form_title} Submission",
                             message: "{all_fields}",
                             service: "wordpress",
-                            toEmail: "hlocker@genesrefrigeration.com",
+                            toEmail: "{admin_email}",
                             toField: "",
                             routing: null,
                             fromName: "{Name:1}",
-                            from: "no-reply@genesrefrigeration.rynosites.com",
-                            replyTo: "{Email:2}",
-                            bcc: "contactform@rynoss.com",
+                            from: "no-reply@example.com",
+                            replyTo: firstEmailFieldId ? `{Email:${firstEmailFieldId}}` : "",
                             disableAutoformat: false,
                             notification_conditional_logic_object: "",
                             notification_conditional_logic: "0",
@@ -395,14 +420,13 @@
                             id: "default_confirmation",
                             name: "Default Confirmation",
                             isDefault: true,
-                            type: "page",
-                            message: "Thanks for submitting your request! We will get in touch with you shortly.",
+                            type: "message",
+                            message: "Thank you for submitting the form! We will get in touch with you shortly.",
                             url: "",
-                            pageId: "214",
+                            pageId: "",
                             queryString: "",
                             event: "",
                             disableAutoformat: false,
-                            page: "214",
                             conditionalLogic: []
                         }],
                         validationPlacement: "below",
